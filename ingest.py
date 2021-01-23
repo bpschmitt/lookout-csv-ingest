@@ -21,10 +21,9 @@ timeStamp, appName, hostName, cpu_idle, mem_util, txnCount, errCount
 }]
 '''
 
-inputFile = os.environ['NR_FILENAME']
-apiKey = os.environ['NR_APIKEY']
-url = 'https://metric-api.newrelic.com/metric/v1'
-#url = 'https://enqp5ob26n3dd.x.pipedream.net/'
+inputFile = os.environ['FILENAME']
+apiKey = os.environ['API_KEY']
+url = os.environ['API_ENDPOINT']
 metrics = {'cpu_idle':3 ,'mem_util': 4,'transaction_count': 5,'error_count': 6}
 
 

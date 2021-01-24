@@ -4,7 +4,6 @@ import asyncio
 import aiohttp
 from asyncio_throttle import Throttler
 import json
-from time import sleep
 
 '''
 500 unique timestamps
@@ -19,6 +18,7 @@ timeStamp, appName, hostName, cpu_idle, mem_util, txnCount, errCount
       "key": "value"
   }]
 }]
+
 '''
 
 inputFile = os.environ['FILENAME']
@@ -29,53 +29,80 @@ metrics = {'cpu_idle':3 ,'mem_util': 4,'transaction_count': 5,'error_count': 6}
 
 async def sendIt(session, payload, throttler, line_count):
     
-    d = [payload]
     headers = {'Content-Type': 'application/json','Api-Key': apiKey}
     async with throttler:
-        async with session.post(url, data = json.dumps(d), headers = headers) as response:
+        async with session.post(url, data = json.dumps(payload), headers = headers) as response:
             json_response = response
             print(str(line_count) + ' --- ' + str(json_response))
 
 
-async def createPayload(row):
-    payload = {}
-    common = {}
+def createPayload(rows):
+    chunks = 1000
+    allPayloads = []
     measurements = {}
     metricslist = []
+    counter = 0
 
-    common['app.name'] = row[1]
-    common['host.name'] = row[2]
-    
-    for k,v in metrics.items():
-        measurements['name'] = k
-        measurements['type'] = 'gauge'
-        measurements['value'] = float(row[int(v)])
-        metricslist.append(measurements)
-        measurements = {}
+    print('total rows: ' + str(len(rows)))
 
-    payload['common'] = {'timestamp': int(row[0]), 'attributes': common}
-    payload['metrics'] = metricslist    
-    
-    return payload
+    for r in rows:
+
+        if counter < chunks:
+            counter += 1
+            for k,v in metrics.items():
+                measurements['name'] = k
+                measurements['type'] = 'gauge'
+                measurements['value'] = float(r[int(v)])
+                measurements['timestamp'] = int(r[0])
+                measurements['attributes'] = {'app.name': r[1], 'host.name': r[2]}
+                metricslist.append(measurements)
+                measurements = {}
+        else:
+            counter = 0
+            allPayloads.append([{'metrics': metricslist}])
+            metricslist = []
+
+    return allPayloads
 
 async def main():
+    timestamps = []
+    rows = []
     tasks = []
-    throttler = Throttler(rate_limit=10000, period=1)
-    conn = aiohttp.TCPConnector(limit=10000)
+    throttler = Throttler(rate_limit=1500, period=1)
+    conn = aiohttp.TCPConnector(limit=1500)
 
     with open(inputFile) as f:
         csv_reader = csv.reader(f, delimiter=',')
         next(csv_reader)
         async with aiohttp.ClientSession(connector=conn) as session:
             line_count = 0
+            prev_ts = 0
             for row in csv_reader:
+                
+                if line_count < 2000000:
+                    line_count += 1
+                    if prev_ts != row[0]:
+                        prev_ts = row[0]
+                        timestamps.append(row[0])
+
+                    rows.append(row)
+                else:
+                    break
+            
+
+            payloads = createPayload(rows)
+            print('chunks: ' + str(len(payloads) + 1))
+           
+
+            line_count = 0
+            for p in payloads:
                 line_count += 1
-                print('Appending row ' + str(line_count))
-                tasks.append(sendIt(session, await createPayload(row), throttler, line_count))
+                tasks.append(await sendIt(session, p, throttler, line_count))
             
             print('Here we go...')
             await asyncio.gather(*tasks)
             print('Complete!')
+
             f.close()
 
 asyncio.run(main())
